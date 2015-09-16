@@ -225,6 +225,9 @@ class TnsParser {
                 $car = $this->readCar();
             } while ('(' == $car);
             $this->back();
+            if (count($value) == 1) {
+                $value = $value[0];
+            }
         } else {
             $this->back();
             $key = $this->readKey();
