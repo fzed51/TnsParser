@@ -1,0 +1,12 @@
+{
+    "name": "fzed51/tns-parser",
+    "description": "Simple php TNSNAME.ora Oracle parser",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "fzed51",
+            "email": "fzed51@users.noreply.github.com"
+        }
+    ],
+    "require": {}
+}
