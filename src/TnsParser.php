@@ -3,7 +3,7 @@
 /*
  * The MIT License
  *
- * Copyright 2015 fabien.sanchez fzed51@gmail.com.
+ * Copyright 2015 Fabien Sanchez fzed51@gmail.com.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -34,6 +34,8 @@ namespace fzed51\TnsParser;
 class TnsParser {
 
     private $strTnsName;
+    private $pointeur;
+    private $oldPointeur;
 
     function __construct() {
 
@@ -51,19 +53,19 @@ class TnsParser {
         }
     }
 
-    static public function parseString($strTnsName) {
+    static function parseString($strTnsName) {
         $p = new self();
         $p->setTnsName($strTnsName);
         return $p->parse();
     }
 
-    static public function parseFile($fileName) {
+    static function parseFile($fileName) {
         $p = new self();
         $p->setTnsNameFromFile($fileName);
         return $p->parse();
     }
 
-    static public function cleanTnsName($strTnsName) {
+    static private function cleanTnsName($strTnsName) {
 // netoie les commentaires
         $strTnsName = preg_replace("/#.*$/m", '', $strTnsName);
 
@@ -78,13 +80,27 @@ class TnsParser {
     }
 
     function parse() {
-        $lignes = explode("\n", $this->strTnsName);
         $tns = [];
+        $this->initPointeur();
 
-        foreach ($lignes as $ligne) {
-            $netServiceName = self::readKey($ligne);
-            self::asValue($ligne);
-            $description = self::readValue($ligne);
+        /*
+          $lignes = explode("\n", $this->strTnsName);
+          foreach ($lignes as $ligne) {
+          $netServiceName = self::readKey($ligne);
+          self::asValue($ligne);
+          $description = self::readValue($ligne);
+          $netServiceNames = explode(',', $netServiceName);
+          foreach ($netServiceNames as $serviceName) {
+          $tns[$serviceName] = $description;
+          }
+          }
+         */
+
+        while (!self::isTheEnd()) {
+            $netServiceName = $this->readKey();
+            $this->asValue();
+            $description = $this->readValue();
+            $this->skipToEndLine();
             $netServiceNames = explode(',', $netServiceName);
             foreach ($netServiceNames as $serviceName) {
                 $tns[$serviceName] = $description;
@@ -94,95 +110,133 @@ class TnsParser {
         return $tns;
     }
 
-    static private function readCar(&$string, $unshift = true) {
-        if (strlen($string) > 0) {
-            $car = $string[0];
-            if ($unshift) {
-                $string = substr($string, 1);
-            }
-            return $car;
+    private function initPointeur($pointeur = null) {
+        $this->pointeur = $pointeur;
+    }
+
+    private function next() {
+        if ($this->pointeur === null) {
+            $this->pointeur = 0;
         } else {
-            return '';
+            $this->pointeur++;
+        }
+        return (bool) !$this->isTheEnd();
+    }
+
+    private function back() {
+        $this->pointeur--;
+        return (bool) ($this->pointeur >= 0);
+    }
+
+    private function isTheEnd() {
+        if (!is_null($this->pointeur)) {
+            if ($this->pointeur >= strlen($this->strTnsName)) {
+                return true;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
         }
     }
 
-    static private function skipCar(&$string, $cars = ' ') {
-        $pattern = "/[$cars]/";
-        $continue = true;
-        do {
-            $car = self::readcar($string);
-            if (!preg_match($pattern, $car)) {
-                $continue = false;
-            }
-        } while ($continue);
-        $string = $car . $string;
+    private function readCar() {
+        if ($this->next()) {
+            return $this->strTnsName[$this->pointeur];
+        }
+        return null;
     }
 
-    static private function readKey(&$string) {
-        $tmp = '';
+    private function skipCar($cars = " \t") {
+        $pattern = "/[$cars]/";
+        while (!$this->isTheEnd() && preg_match($pattern, $this->readCar())) {
+            // pass
+        }
+        $this->back();
+        return (bool) !$this->isTheEnd();
+    }
+
+    private function skipToEndLine() {
+        $start = $this->pointeur;
+        $this->skipCar();
+        if (($this->readCar() === "\n") || $this->isTheEnd()) {
+            return true;
+        } else {
+            $this->initPointeur($start);
+            return false;
+        }
+    }
+
+    private function viewScop($long = 20) {
+        $start = max([0, ($this->pointeur - $long)]);
+        $end = min([($this->pointeur + $long), (strlen($this->strTnsName) - 1)]);
+        return substr($this->strTnsName, $start, $this->pointeur - $start) . '!>' . substr($this->strTnsName, $this->pointeur, $end - $this->pointeur);
+    }
+
+    private function readKey() {
         $key = '';
+        $start = $this->pointeur;
 
         $continue = true;
         do {
-            $car = self::readCar($string);
-            $tmp .= $car;
-            if (preg_match("/[a-zA-Z0-9_\-.]/", $car)) {
+            $car = $this->readCar();
+            if (!is_null($car) && preg_match("/[a-zA-Z0-9_\-.]/", $car) > 0) {
                 $key .= $car;
             } else {
+                $this->back();
                 $continue = false;
             }
         } while ($continue);
 
-
         if (empty($key)) {
-            $string = $tmp . $string;
-            throw new Exception\ParseException('Erreur de lecture, une valeur était attendu dans :' . PHP_EOL . $string);
-        } else {
-            $string = $car . $string;
-            self::skipCar($string, " \r\n\t");
+            $this->initPointeur($start);
+            throw new Exception\ParseException('Erreur de lecture, une valeur était attendu dans :' . PHP_EOL . $this->viewScop() . PHP_EOL);
         }
 
         return $key;
     }
 
-    static private function asValue(&$string) {
+    private function asValue() {
         $asValue = false;
-        self::skipCar($string, " \r\n\t");
-        $car = self::readCar($string, false);
-        if ($car == '=') {
+        $this->skipCar(" \r\n\t");
+        if ($this->readCar() == '=') {
             $asValue = true;
+            $this->skipCar(" =\r\n\t");
+        } else {
+            $this->back();
         }
-        self::skipCar($string, " =\r\n\t");
+
         return $asValue;
     }
 
-    static private function readValue(&$string) {
+    private function readValue() {
         $value = [];
 
-        self::skipCar($string, " \r\n\t");
-        $car = self::readCar($string);
+        $this->skipCar(" \r\n\t");
+        $car = $this->readCar();
         if ($car == '(') {
             do {
-                array_push($value, self::readValue($string));
-                if (self::readCar($string) != ')') {
-                    throw new Exception\ParseException('Erreur de lecture, une \')\' était attendue.');
+                array_push($value, $this->readValue());
+                $this->skipCar(" \r\n\t");
+                if ($this->readCar() != ')') {
+                    throw new Exception\ParseException('Erreur de lecture, une \')\' était attendue dans :' . PHP_EOL . $this->viewScop(40) . PHP_EOL);
                 }
-                $car = self::readCar($string);
+                $this->skipCar(" \r\n\t");
+                $car = $this->readCar();
             } while ('(' == $car);
-            $string = $car . $string;
+            $this->back();
         } else {
-            $string = $car . $string;
-            $key = self::readKey($string);
-            if (self::asValue($string)) {
-                $val = self::readValue($string);
+            $this->back();
+            $key = $this->readKey();
+            if ($this->asValue()) {
+                $val = $this->readValue();
                 $value[$key] = $val;
             } else {
                 $value = $key;
             }
         }
 
-        self::skipCar($string, " \r\n\t");
-
+        $this->skipCar(" \r\n\t");
 
         return $value;
     }
